@@ -1,0 +1,78 @@
+{
+  "name": "verdix-ai-sdk",
+  "version": "0.1.0",
+  "description": "Vercel AI SDK tool: check an EVM address on Base before sending it funds (safe/caution/danger). Pays per call via x402 in USDC from your agent's wallet, within caps you set.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "keywords": [
+    "ai",
+    "ai-sdk",
+    "vercel",
+    "tool",
+    "agents",
+    "x402",
+    "base",
+    "usdc",
+    "wallet",
+    "address",
+    "risk",
+    "scam",
+    "address-poisoning",
+    "security"
+  ],
+  "homepage": "https://api.verdixapi.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/verdixapi/verdix-ai-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/verdixapi/verdix-ai-sdk/issues"
+  },
+  "dependencies": {
+    "@x402/evm": "^2.28.0",
+    "@x402/fetch": "^2.28.0",
+    "zod": "^4.1.8"
+  },
+  "peerDependencies": {
+    "ai": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "ai": "^7.0.123",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "viem": "^2.56.9",
+    "vitest": "^4.1.11"
+  }
+}
