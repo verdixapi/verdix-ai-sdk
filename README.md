@@ -10,6 +10,8 @@ It checks OFAC sanctions, scam, phishing and exploit lists, live **address-poiso
 npm install verdix-ai-sdk ai viem
 ```
 
+Payments are real USDC on Base mainnet; there is no testnet mode.
+
 ## Usage
 
 ```ts
@@ -28,6 +30,8 @@ const { text } = await generateText({
   prompt: 'Send 250 USDC on Base to 0x000000000000000000000000000000000000dEaD.',
 });
 ```
+
+The `'openai/gpt-5-mini'` model string goes through the Vercel AI Gateway (set `AI_GATEWAY_API_KEY`); any AI SDK provider model works too.
 
 The model gets one tool, `checkAddressRisk({ address, tier? })`, and its result:
 
