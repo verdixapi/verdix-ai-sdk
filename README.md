@@ -98,6 +98,28 @@ verdixTools({
 - **You are not charged when a data source fails.** The API then answers `caution` with `complete: false` (and `retryAfterSeconds`), and never `safe`.
 - The model cannot change the caps: they are fixed when the tool is created.
 
+## Ask the user only when Verdix finds a risk
+
+If your agent has its own send or transfer tool, use `verdixNeedsApproval` as its [`needsApproval`](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#tool-execution-approval). Before the tool runs, it checks the destination address. A `safe` answer runs the tool directly. A `caution` or `danger` answer pauses it for the user's approval (a `tool-approval-request`).
+
+```ts
+import { tool } from 'ai';
+import { z } from 'zod';
+import { verdixNeedsApproval } from 'verdix-ai-sdk';
+
+const sendUsdc = tool({
+  description: 'Send USDC on Base',
+  inputSchema: z.object({ to: z.string(), amount: z.number() }),
+  needsApproval: verdixNeedsApproval({ account, maxPricePerCallUsd: 0.02 }), // quick tier
+  execute: async ({ to, amount }) => send(to, amount),
+});
+```
+
+- **Address:** by default, the first of `to`, `recipient` or `address` in the tool input. Use `address: 'field'` or `address: input => input.payment.to` for another field.
+- **Tier:** `tier` defaults to `quick` ($0.02).
+- **Showing the reasons:** `onResult(result, input)` receives each answer, for example to display the reasons in your approval prompt.
+- **When the check fails, the user is asked, never skipped.** This covers no address found, Verdix unreachable, a price over the cap, a spent budget and an incomplete answer.
+
 ## Without a model
 
 ```ts

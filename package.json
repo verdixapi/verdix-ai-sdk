@@ -1,6 +1,6 @@
 {
   "name": "verdix-ai-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Vercel AI SDK tool: check an EVM address on Base before sending it funds (safe/caution/danger). Pays per call via x402 in USDC from your agent's wallet, within caps you set.",
   "license": "MIT",
   "type": "module",

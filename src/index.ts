@@ -1,3 +1,4 @@
+export { verdixNeedsApproval, type VerdixNeedsApprovalOptions } from './approval';
 export {
   createVerdixClient,
   tiersWithinCap,
