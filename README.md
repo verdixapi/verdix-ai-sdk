@@ -1,6 +1,6 @@
 # verdix-ai-sdk
 
-An [AI SDK](https://ai-sdk.dev) tool that screens an EVM address on Base **before your agent sends it funds**, and answers `safe`, `caution` or `danger` with reasons.
+An [AI SDK](https://ai-sdk.dev) tool that screens an EVM address on Base **before your agent sends it funds**, and answers `safe`, `caution` or `danger` with reasons. A second, cheaper tool, [`checkAddressRiskLite`](#lite-001-never-safe) ($0.01), answers `no_known_risk`, `caution` or `danger` and never `safe`.
 
 It checks OFAC sanctions, scam, phishing and exploit lists, live **address-poisoning lookalikes**, burn addresses, contract and deployer signals, and on-chain behaviour. There is no API key and no sign-up: each check is paid per call via [x402](https://x402.org), in USDC on Base, from your agent's own wallet, under caps you set.
 
@@ -75,6 +75,44 @@ The model picks a tier by what is at stake. It can only pick tiers that fit unde
 
 Each tier has its own URL (`https://api.verdixapi.com/risk/address/{tier}`) with a single price, so the tier the model asks for is exactly the tier that is paid.
 
+## Lite ($0.01, never "safe")
+
+`checkAddressRiskLite({ address })` is a second, separate tool: the cheapest screen, meant for a quick look before sending USDC to an address you don't know. It calls `/risk/address/lite`, which checks OFAC sanctions, scam and phishing lists, address-poisoning lookalikes, burn addresses, phishing tokens and flagged contract deployers. It skips address age and the caution-only contract checks.
+
+Its verdict is `no_known_risk`, `caution` or `danger`, **never `safe`**. `no_known_risk` only means the address is on none of those lists; it is not a safety verdict. If you need `safe` (say, before a large transfer), use `checkAddressRisk` with the `quick` tier ($0.02). The tool's description tells the model the same.
+
+`verdixTools` does not include it, so add it yourself. Pass one client to both tools to share one budget:
+
+```ts
+import { checkAddressRisk, checkAddressRiskLite, createVerdixClient } from 'verdix-ai-sdk';
+
+const options = { account, maxPricePerCallUsd: 0.1, maxTotalSpendUsd: 1 };
+const verdix = createVerdixClient(options);
+
+const tools = {
+  checkAddressRisk: checkAddressRisk(options, verdix),
+  checkAddressRiskLite: checkAddressRiskLite(options, verdix),
+};
+```
+
+Its result:
+
+```jsonc
+{
+  "verdict": "no_known_risk", // "no_known_risk" | "caution" | "danger", never "safe"
+  "limitedChecks": true,
+  "checksPerformed": ["ofac", "scam_lists", "poisoning_watch", "burn_list", "phishing_token", "deployer_flagged"],
+  "notChecked": ["address_age", "flash_loan_contracts", "unverified_contracts"],
+  "fullCheck": "Limited checks only: ... use POST /risk/address/quick.",
+  "advice": "None of the lists lite checks know this address. This is NOT a safety verdict: ...",
+  "tier": "lite",
+  "priceUsd": 0.01
+  // plus riskScore, reasons, checked, complete, charged, payment, address, chain, asOf
+}
+```
+
+`checkAddressRisk` itself is unchanged: its `tier` choice is still quick, standard and deep, never lite. A best-effort lite check that could not finish is listed in `notChecked`; if the API ever answered `safe` on lite, the tool returns a tool error instead of passing it on. `verdixNeedsApproval` keeps using quick (it needs a `safe` answer to let a transfer run without asking).
+
 ## Options
 
 ```ts
@@ -132,6 +170,12 @@ const result = await verdix.checkAddress({ address: '0x...', tier: 'quick' });
 if (result.verdict !== 'safe') {
   // stop, or ask the user
 }
+
+const lite = await verdix.checkAddressLite({ address: '0x...' }); // $0.01
+if (lite.verdict !== 'no_known_risk') {
+  // lite never answers "safe"
+}
+const litePrice = await verdix.getLitePricing(); // free; getPricing() lists quick/standard/deep only
 ```
 
 Errors you should expect are `VerdixError`s: a malformed address, a price over your cap, an exhausted budget or an unexpected API answer. When the tool runs inside `generateText`, the AI SDK hands them to the model as a tool error.

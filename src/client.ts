@@ -7,10 +7,12 @@ import {
 import {
   BASE_MAINNET,
   DEFAULT_API_URL,
+  LITE_TIER,
   TIER_LIST_PRICES_USD,
   USDC_BASE,
   USDC_DECIMALS,
   VERDIX_TIERS,
+  type VerdixLiteTier,
   type VerdixTier,
 } from './constants';
 import { VerdixError } from './errors';
@@ -56,6 +58,9 @@ export interface VerdixClientOptions {
 
 export type VerdixVerdict = 'safe' | 'caution' | 'danger';
 
+/** The lite tier's verdicts: its clean answer is `no_known_risk`, never `safe`. */
+export type VerdixLiteVerdict = 'no_known_risk' | 'caution' | 'danger';
+
 export interface VerdixPayment {
   /** Settlement transaction hash on Base. */
   transaction: string;
@@ -97,8 +102,41 @@ export interface VerdixCheckResult {
   payment: VerdixPayment | null;
 }
 
+/** The answer to one lite check ($0.01). Its verdict is never `safe`. */
+export interface VerdixLiteCheckResult {
+  address: string;
+  chain: string;
+  tier: VerdixLiteTier;
+  /**
+   * `no_known_risk`: the address is on none of the lists lite checks. This is
+   * not a safety verdict; use the quick tier for one.
+   * `caution`: some risk signals, or a check could not complete.
+   * `danger`: strong risk signals. Do not send funds.
+   */
+  verdict: VerdixLiteVerdict;
+  riskScore: number;
+  reasons: string[];
+  checked: string[];
+  asOf: string;
+  priceUsd: number;
+  /** Always `true`: lite runs only some of the checks. */
+  limitedChecks: true;
+  checksPerformed: string[];
+  /**
+   * Checks lite skipped (address age, caution-only contract checks, and any
+   * best-effort check that could not finish).
+   */
+  notChecked: string[];
+  /** The API's pointer to the quick tier, for a check that can say `safe`. */
+  fullCheck: string;
+  complete: boolean;
+  retryAfterSeconds?: number;
+  charged: boolean;
+  payment: VerdixPayment | null;
+}
+
 export interface VerdixTierQuote {
-  tier: VerdixTier;
+  tier: VerdixTier | VerdixLiteTier;
   priceUsd: number;
   network: string;
   asset: string;
@@ -116,6 +154,22 @@ export interface VerdixClient {
 
   /** Live price of each tier, from the API's unpaid quotes. Nothing is signed. */
   getPricing(): Promise<VerdixTierQuote[]>;
+
+  /**
+   * Paid lite check ($0.01) at `/risk/address/lite`. Its verdict is
+   * `no_known_risk`, `caution` or `danger`, never `safe`; use
+   * `checkAddress({ tier: 'quick' })` when you need a `safe` verdict.
+   */
+  checkAddressLite(input: {
+    address: string;
+    abortSignal?: AbortSignal;
+  }): Promise<VerdixLiteCheckResult>;
+
+  /**
+   * Live price of the lite tier, from its unpaid quote. Nothing is signed.
+   * Kept apart from `getPricing`, which lists quick, standard and deep only.
+   */
+  getLitePricing(): Promise<VerdixTierQuote>;
 
   /** USD paid (or reserved for an in-flight check) so far by this client. */
   readonly spentUsd: number;
@@ -135,13 +189,21 @@ function formatUsd(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
+/**
+ * Like `formatUsd`, but a sub-cent cap (e.g. 0.005) is shown as is, so
+ * "costs $0.01, above the $0.01 per-call cap" can't happen.
+ */
+function formatCap(usd: number): string {
+  return Number(usd.toFixed(2)) === usd ? formatUsd(usd) : `$${usd}`;
+}
+
 function assertUsdAmount(name: string, value: unknown): asserts value is number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
     throw new VerdixError(`${name} must be a non-negative number of US dollars`);
   }
 }
 
-function tierUrl(apiUrl: string, tier: VerdixTier): string {
+function tierUrl(apiUrl: string, tier: VerdixTier | VerdixLiteTier): string {
   return `${apiUrl}/risk/address/${tier}`;
 }
 
@@ -161,7 +223,7 @@ function parseQuote(header: string | null): PaymentRequirement[] {
  */
 function assertAcceptable(
   option: PaymentRequirement | undefined,
-  tier: VerdixTier,
+  tier: VerdixTier | VerdixLiteTier,
   maxPricePerCallUsd: number,
 ): asserts option is PaymentRequirement {
   if (!option || option.scheme !== 'exact' || option.extra?.tier !== tier) {
@@ -178,7 +240,7 @@ function assertAcceptable(
   if (BigInt(option.amount) > usdToAtomic(maxPricePerCallUsd)) {
     throw new VerdixError(
       `Refusing to pay: the ${tier} tier costs ${formatUsd(atomicToUsd(option.amount))}, ` +
-        `above the ${formatUsd(maxPricePerCallUsd)} per-call cap (maxPricePerCallUsd)`,
+        `above the ${formatCap(maxPricePerCallUsd)} per-call cap (maxPricePerCallUsd)`,
     );
   }
 }
@@ -211,6 +273,47 @@ function toCheckResult(
   };
 }
 
+function toLiteResult(
+  body: Record<string, unknown>,
+  complete: boolean,
+  retryAfter: string | null,
+  payment: VerdixPayment | null,
+): VerdixLiteCheckResult {
+  const verdict = body.verdict;
+  // Lite never says "safe"; an answer that does is not passed on as one.
+  if (verdict !== 'no_known_risk' && verdict !== 'caution' && verdict !== 'danger') {
+    throw new VerdixError("Unexpected answer from Verdix's lite tier: no lite verdict");
+  }
+  const strings = (value: unknown) => (Array.isArray(value) ? value.map(String) : []);
+  const retryAfterSeconds = retryAfter ? Number(retryAfter) : NaN;
+  return {
+    address: String(body.address),
+    chain: String(body.chain),
+    tier: LITE_TIER,
+    verdict,
+    riskScore: Number(body.risk_score),
+    reasons: strings(body.reasons),
+    checked: strings(body.checked),
+    asOf: String(body.as_of),
+    priceUsd: Number(body.price_usd),
+    limitedChecks: true,
+    checksPerformed: strings(body.checks_performed),
+    notChecked: strings(body.not_checked),
+    fullCheck: typeof body.full_check === 'string' ? body.full_check : '',
+    complete,
+    ...(Number.isFinite(retryAfterSeconds) ? { retryAfterSeconds } : {}),
+    charged: payment !== null,
+    payment,
+  };
+}
+
+type ToResult<R> = (
+  body: Record<string, unknown>,
+  complete: boolean,
+  retryAfter: string | null,
+  payment: VerdixPayment | null,
+) => R;
+
 /**
  * Creates a Verdix client that pays for each check via x402 from `account`,
  * within the caps you set.
@@ -233,6 +336,12 @@ export function createVerdixClient(options: VerdixClientOptions): VerdixClient {
     maxTotalSpendUsd === undefined ? undefined : usdToAtomic(maxTotalSpendUsd);
   let spent = 0n;
 
+  function assertAddress(address: string): void {
+    if (!ADDRESS_PATTERN.test(address ?? '')) {
+      throw new VerdixError('address must be 0x followed by 40 hex characters');
+    }
+  }
+
   async function checkAddress({
     address,
     tier = 'standard',
@@ -242,13 +351,30 @@ export function createVerdixClient(options: VerdixClientOptions): VerdixClient {
     tier?: VerdixTier;
     abortSignal?: AbortSignal;
   }): Promise<VerdixCheckResult> {
-    if (!ADDRESS_PATTERN.test(address ?? '')) {
-      throw new VerdixError('address must be 0x followed by 40 hex characters');
-    }
+    assertAddress(address);
     if (!VERDIX_TIERS.includes(tier)) {
       throw new VerdixError(`tier must be one of ${VERDIX_TIERS.join(', ')}`);
     }
+    return paidCheck(address, tier, toCheckResult, abortSignal);
+  }
 
+  async function checkAddressLite({
+    address,
+    abortSignal,
+  }: {
+    address: string;
+    abortSignal?: AbortSignal;
+  }): Promise<VerdixLiteCheckResult> {
+    assertAddress(address);
+    return paidCheck(address, LITE_TIER, toLiteResult, abortSignal);
+  }
+
+  async function paidCheck<R>(
+    address: string,
+    tier: VerdixTier | VerdixLiteTier,
+    toResult: ToResult<R>,
+    abortSignal: AbortSignal | undefined,
+  ): Promise<R> {
     // The amount reserved against the budget for this call, if one was signed.
     let reserved = 0n;
     // The x402 library wraps errors thrown by the selector; keep ours so the
@@ -339,7 +465,7 @@ export function createVerdixClient(options: VerdixClientOptions): VerdixClient {
     // failed, and a degraded-mode answer comes back free: both are usable
     // (unpaid) answers resting on incomplete data, not errors.
     if (response.ok || (response.status === 503 && body?.verdict)) {
-      return toCheckResult(
+      return toResult(
         body,
         response.ok && !response.headers.get('x-verdix-degraded'),
         response.headers.get('retry-after'),
@@ -353,33 +479,39 @@ export function createVerdixClient(options: VerdixClientOptions): VerdixClient {
     throw new VerdixError(`Verdix returned HTTP ${response.status}${detail}`);
   }
 
-  async function getPricing(): Promise<VerdixTierQuote[]> {
-    return Promise.all(
-      VERDIX_TIERS.map(async tier => {
-        const response = await fetchImpl(tierUrl(apiUrl, tier), { method: 'GET' });
-        const option = parseQuote(response.headers.get('payment-required')).find(
-          candidate => candidate?.extra?.tier === tier,
-        );
-        if (response.status !== 402 || !option) {
-          throw new VerdixError(
-            `Unexpected pricing answer from Verdix for the ${tier} tier: HTTP ${response.status}`,
-          );
-        }
-        return {
-          tier,
-          priceUsd: atomicToUsd(option.amount),
-          network: option.network,
-          asset: option.asset,
-          payTo: option.payTo,
-          withinCap: BigInt(option.amount) <= usdToAtomic(maxPricePerCallUsd),
-        };
-      }),
+  async function quoteFor(tier: VerdixTier | VerdixLiteTier): Promise<VerdixTierQuote> {
+    const response = await fetchImpl(tierUrl(apiUrl, tier), { method: 'GET' });
+    const option = parseQuote(response.headers.get('payment-required')).find(
+      candidate => candidate?.extra?.tier === tier,
     );
+    if (response.status !== 402 || !option) {
+      throw new VerdixError(
+        `Unexpected pricing answer from Verdix for the ${tier} tier: HTTP ${response.status}`,
+      );
+    }
+    return {
+      tier,
+      priceUsd: atomicToUsd(option.amount),
+      network: option.network,
+      asset: option.asset,
+      payTo: option.payTo,
+      withinCap: BigInt(option.amount) <= usdToAtomic(maxPricePerCallUsd),
+    };
+  }
+
+  async function getPricing(): Promise<VerdixTierQuote[]> {
+    return Promise.all(VERDIX_TIERS.map(quoteFor));
+  }
+
+  async function getLitePricing(): Promise<VerdixTierQuote> {
+    return quoteFor(LITE_TIER);
   }
 
   return {
     checkAddress,
     getPricing,
+    checkAddressLite,
+    getLitePricing,
     get spentUsd() {
       return atomicToUsd(spent);
     },

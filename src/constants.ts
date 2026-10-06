@@ -22,3 +22,15 @@ export const TIER_LIST_PRICES_USD: Record<VerdixTier, number> = {
   standard: 0.1,
   deep: 0.5,
 };
+
+/**
+ * The lite tier is sold only at its own URL and never answers "safe", so it
+ * stays out of `VERDIX_TIERS` (and so out of `checkAddressRisk`'s tier
+ * choice, `getPricing` and `tiersWithinCap`); it has its own tool and client
+ * methods.
+ */
+export const LITE_TIER = 'lite' as const;
+
+export type VerdixLiteTier = typeof LITE_TIER;
+
+export const LITE_LIST_PRICE_USD = 0.01;

@@ -6,8 +6,14 @@ import {
   type VerdixCheckResult,
   type VerdixClient,
   type VerdixClientOptions,
+  type VerdixLiteCheckResult,
 } from './client';
-import { TIER_LIST_PRICES_USD, VERDIX_TIERS, type VerdixTier } from './constants';
+import {
+  LITE_LIST_PRICE_USD,
+  TIER_LIST_PRICES_USD,
+  VERDIX_TIERS,
+  type VerdixTier,
+} from './constants';
 import { VerdixError } from './errors';
 
 export interface VerdixToolOptions extends VerdixClientOptions {
@@ -143,4 +149,82 @@ export function verdixTools(options: VerdixToolOptions): {
   return {
     checkAddressRisk: checkAddressRisk(options),
   };
+}
+
+export interface VerdixLiteToolInput {
+  address: string;
+}
+
+export interface VerdixLiteToolResult extends VerdixLiteCheckResult {
+  /** What the agent should do with this verdict. */
+  advice: string;
+}
+
+const LITE_ADVICE: Record<VerdixLiteCheckResult['verdict'], string> = {
+  no_known_risk:
+    'None of the lists lite checks know this address. This is NOT a safety verdict: lite ' +
+    'skips some checks (see "notChecked"). Confirm the full address and amount with the ' +
+    'user, and for a large or irreversible transfer run the full check (checkAddressRisk, ' +
+    'quick tier), which can answer "safe".',
+  caution: ADVICE.caution,
+  danger: ADVICE.danger,
+};
+
+const LITE_DESCRIPTION = [
+  `Cheapest screen ($${LITE_LIST_PRICE_USD.toFixed(2)}) of an EVM address on Base BEFORE sending it`,
+  'funds, when the recipient is unknown or new. Checks OFAC sanctions, scam/phishing lists,',
+  'address-poisoning lookalikes, burn addresses, phishing tokens and flagged contract',
+  'deployers; skips address age and the caution-only contract checks. Each call is paid in',
+  "USDC from the agent's wallet, so call it once per destination address.",
+  '',
+  'Verdicts: "no_known_risk", "caution" or "danger". This tool NEVER answers "safe":',
+  '"no_known_risk" only means the address is on none of these lists, not that it is safe.',
+  '"caution" means risk signals or incomplete data: ask the user before sending. "danger"',
+  'means do not send. If you need a "safe" verdict (e.g. before a large transfer), use the',
+  'full check (checkAddressRisk, quick tier) instead. Follow the "advice" field.',
+].join('\n');
+
+/**
+ * Creates the `checkAddressRiskLite` tool: the cheapest Verdix screen
+ * ($0.01), paid per call via x402 from `account`. Its verdict is
+ * `no_known_risk`, `caution` or `danger`, never `safe`.
+ *
+ * Not part of `verdixTools`; add it yourself, with the same client to share
+ * one budget:
+ *
+ * @example
+ * ```ts
+ * const verdix = createVerdixClient(options);
+ * const tools = {
+ *   checkAddressRisk: checkAddressRisk(options, verdix),
+ *   checkAddressRiskLite: checkAddressRiskLite(options, verdix),
+ * };
+ * ```
+ */
+export function checkAddressRiskLite(
+  options: VerdixClientOptions,
+  client: VerdixClient = createVerdixClient(options),
+): Tool<VerdixLiteToolInput, VerdixLiteToolResult> {
+  if (
+    typeof options.maxPricePerCallUsd === 'number' &&
+    options.maxPricePerCallUsd < LITE_LIST_PRICE_USD
+  ) {
+    throw new VerdixError(
+      `maxPricePerCallUsd ($${options.maxPricePerCallUsd}) is below the lite tier's price ` +
+        `($${LITE_LIST_PRICE_USD.toFixed(2)})`,
+    );
+  }
+  return tool({
+    description: LITE_DESCRIPTION,
+    inputSchema: z.object({
+      address: z
+        .string()
+        .regex(/^0x[0-9a-fA-F]{40}$/)
+        .describe('The full destination address (0x followed by 40 hex characters).'),
+    }),
+    execute: async ({ address }, { abortSignal }): Promise<VerdixLiteToolResult> => {
+      const result = await client.checkAddressLite({ address, abortSignal });
+      return { ...result, advice: LITE_ADVICE[result.verdict] };
+    },
+  });
 }
