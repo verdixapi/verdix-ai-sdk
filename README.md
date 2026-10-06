@@ -113,6 +113,8 @@ Its result:
 
 `checkAddressRisk` itself is unchanged: its `tier` choice is still quick, standard and deep, never lite. A best-effort lite check that could not finish is listed in `notChecked`; if the API ever answered `safe` on lite, the tool returns a tool error instead of passing it on. `verdixNeedsApproval` keeps using quick (it needs a `safe` answer to let a transfer run without asking).
 
+The client methods behind it, `checkAddressLite` and `getLitePricing`, are optional on the `VerdixClient` interface, so a custom client written for 0.2.x still compiles. Given such a client, `checkAddressRiskLite` answers each call with a tool error ("This client does not support lite") and sends nothing. `createVerdixClient` always has both.
+
 ## Options
 
 ```ts

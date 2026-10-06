@@ -10,6 +10,7 @@ import {
   tiersWithinCap,
   VERDIX_TIERS,
   verdixTools,
+  type VerdixClient,
 } from '../src';
 import { ADDRESS, PAY_TO, TX_HASH, liteBody, mockApi, option, settledResponse } from './mock-api';
 
@@ -239,6 +240,51 @@ describe('checkAddressRiskLite tool', () => {
     });
     expect(steps[0]!.content.some(part => part.type === 'tool-error')).toBe(true);
     expect(steps[0]!.toolResults).toHaveLength(0);
+  });
+
+  describe('with a custom VerdixClient written for 0.2.x (no lite methods)', () => {
+    // Type-checks as a VerdixClient: the lite methods are optional.
+    const legacyClient: VerdixClient = {
+      checkAddress: async () => {
+        throw new Error('not called');
+      },
+      getPricing: async () => [],
+      spentUsd: 0,
+    };
+
+    it('still builds both tools', () => {
+      const options = { account, maxPricePerCallUsd: 0.1 };
+      expect(() => checkAddressRisk(options, legacyClient)).not.toThrow();
+      expect(() => checkAddressRiskLite(options, legacyClient)).not.toThrow();
+    });
+
+    it('answers a lite call with a clear "does not support lite" error', async () => {
+      const lite = checkAddressRiskLite({ account, maxPricePerCallUsd: 0.1 }, legacyClient);
+      await expect(
+        lite.execute!({ address: ADDRESS }, { toolCallId: 'call-1', messages: [], context: {} } as never),
+      ).rejects.toThrow(/This client does not support lite/);
+    });
+
+    it('gives the model a tool error, without any request', async () => {
+      const api = mockApi();
+      const { steps } = await generateText({
+        model: modelCalling('checkAddressRiskLite', { address: ADDRESS }),
+        prompt: 'Check it',
+        tools: {
+          checkAddressRiskLite: checkAddressRiskLite(
+            { account, maxPricePerCallUsd: 0.1, fetch: api.fetch },
+            legacyClient,
+          ),
+        },
+        stopWhen: isStepCount(2),
+      });
+      const error = steps[0]!.content.find(part => part.type === 'tool-error');
+      expect(error).toBeDefined();
+      expect(String((error as { error: unknown }).error)).toContain(
+        'This client does not support lite',
+      );
+      expect(api.calls).toHaveLength(0);
+    });
   });
 
   it('is not added to verdixTools', () => {

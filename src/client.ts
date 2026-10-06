@@ -159,8 +159,11 @@ export interface VerdixClient {
    * Paid lite check ($0.01) at `/risk/address/lite`. Its verdict is
    * `no_known_risk`, `caution` or `danger`, never `safe`; use
    * `checkAddress({ tier: 'quick' })` when you need a `safe` verdict.
+   *
+   * Optional, so a custom `VerdixClient` written for 0.2.x still type-checks;
+   * `createVerdixClient` always provides it.
    */
-  checkAddressLite(input: {
+  checkAddressLite?(input: {
     address: string;
     abortSignal?: AbortSignal;
   }): Promise<VerdixLiteCheckResult>;
@@ -168,12 +171,17 @@ export interface VerdixClient {
   /**
    * Live price of the lite tier, from its unpaid quote. Nothing is signed.
    * Kept apart from `getPricing`, which lists quick, standard and deep only.
+   * Optional for the same reason as `checkAddressLite`.
    */
-  getLitePricing(): Promise<VerdixTierQuote>;
+  getLitePricing?(): Promise<VerdixTierQuote>;
 
   /** USD paid (or reserved for an in-flight check) so far by this client. */
   readonly spentUsd: number;
 }
+
+/** A `VerdixClient` with the lite methods, as `createVerdixClient` returns it. */
+export type VerdixClientWithLite = VerdixClient &
+  Required<Pick<VerdixClient, 'checkAddressLite' | 'getLitePricing'>>;
 
 const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 
@@ -318,7 +326,7 @@ type ToResult<R> = (
  * Creates a Verdix client that pays for each check via x402 from `account`,
  * within the caps you set.
  */
-export function createVerdixClient(options: VerdixClientOptions): VerdixClient {
+export function createVerdixClient(options: VerdixClientOptions): VerdixClientWithLite {
   const { account, maxPricePerCallUsd, maxTotalSpendUsd } = options;
   if (!account || typeof account.signTypedData !== 'function') {
     throw new VerdixError(

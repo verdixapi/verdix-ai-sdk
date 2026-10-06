@@ -5,6 +5,7 @@ export {
   type VerdixCheckResult,
   type VerdixClient,
   type VerdixClientOptions,
+  type VerdixClientWithLite,
   type VerdixLiteCheckResult,
   type VerdixLiteVerdict,
   type VerdixPayment,

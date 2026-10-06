@@ -223,6 +223,13 @@ export function checkAddressRiskLite(
         .describe('The full destination address (0x followed by 40 hex characters).'),
     }),
     execute: async ({ address }, { abortSignal }): Promise<VerdixLiteToolResult> => {
+      // A custom VerdixClient written before lite existed has no such method.
+      if (typeof client.checkAddressLite !== 'function') {
+        throw new VerdixError(
+          'This client does not support lite: it has no checkAddressLite method ' +
+            '(use createVerdixClient, or add checkAddressLite to your VerdixClient)',
+        );
+      }
       const result = await client.checkAddressLite({ address, abortSignal });
       return { ...result, advice: LITE_ADVICE[result.verdict] };
     },
